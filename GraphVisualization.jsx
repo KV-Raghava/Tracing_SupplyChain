@@ -211,101 +211,96 @@ const GraphVisualization = ({ data }) => {
     console.log("Second useEffect - Graph data:", graphData, "fgRef exists:", !!fgRef.current);
     if (fgRef.current && graphData.nodes.length > 0) {
       console.log("Setting up force graph with", graphData.nodes.length, "nodes and", graphData.links.length, "links");
-      // Stronger repelling force for better node separation with straight lines
-      fgRef.current.d3Force('charge').strength(-1000);
+      // Define the order of node types from left to right
+      const nodeTypeOrder = [
+        'Farmer',
+        'Farmer_Group',
+        'Local_Buying_Agent',
+        'Lot',
+        'Purchase_Order',
+        'PMB',
+        'Process_Order',
+        'Transfer_Order'
+      ];
       
-      // Use longer distance for links since they're straight
+      // Calculate X positions based on node type order (strict columns)
+      const totalWidth = dimensions.width * 0.85; // Use 85% of the width
+      const xStep = totalWidth / (nodeTypeOrder.length - 1); // Equal spacing
+      const xOffset = -totalWidth / 2; // Center the line
+      
+      // For a straight line layout, reduce or remove most forces
+      
+      // Very weak charge force - just enough to prevent complete overlap
+      fgRef.current.d3Force('charge').strength(-50);
+      
+      // Use longer distance for links with low strength
       fgRef.current.d3Force('link')
-        .distance(200)  // Longer distance between linked nodes for straight lines
-        .strength(0.2); // Weaker link strength for more flexibility
+        .distance(xStep)  // Match the column spacing
+        .strength(0.05);  // Very weak link influence
       
-      // Very weak center force to allow nodes to spread out more freely
-      fgRef.current.d3Force('center').strength(0.1);
+      // No center force for a straight line
+      fgRef.current.d3Force('center', null);
       
-      // Add stronger collision force to prevent node overlap
-      fgRef.current.d3Force('collision', d3.forceCollide(70)); // Increased for larger nodes
+      // Minimal collision detection just to prevent exact overlap
+      fgRef.current.d3Force('collision', d3.forceCollide(30));
       
       // Remove any gravity force
       fgRef.current.d3Force('gravity', null);
       
-      // Apply initial velocities for faster horizontal layout
+      // Clear any initial velocities for a controlled straight line layout
       graphData.nodes.forEach(node => {
-        // Give nodes an initial velocity based on their type position
-        let xVelocity = 0;
-        switch(node.type) {
-          case 'Farmer': xVelocity = -5; break;
-          case 'Farmer_Group': xVelocity = -4; break;
-          case 'Local_Buying_Agent': xVelocity = -2; break;
-          case 'Lot': xVelocity = -1; break;
-          case 'Purchase_Order': xVelocity = 1; break;
-          case 'PMB': xVelocity = 2; break;
-          case 'Process_Order': xVelocity = 4; break;
-          case 'Transfer_Order': xVelocity = 5; break;
-        }
-        node.vx = xVelocity;
-        // Random small vertical velocity to avoid straight lines
-        node.vy = (Math.random() - 0.5) * 2;
+        // Reset velocities
+        node.vx = 0;
+        node.vy = 0;
       });
       
-      // Add custom X positioning for nodes that haven't been manually positioned
-      fgRef.current.d3Force('x', d3.forceX(node => {
-        // If node has been dragged and fixed, don't apply force
-        if (node.fx !== undefined && node.fy !== undefined) {
-          return node.fx; // Return the fixed position
+      // Set exact X positions for nodes
+      graphData.nodes.forEach(node => {
+        if (node.fx === undefined) { // Don't override manually positioned nodes
+          const typeIndex = nodeTypeOrder.indexOf(node.type);
+          if (typeIndex >= 0) {
+            // Fixed X position for each node type
+            node.fx = xOffset + (typeIndex * xStep);
+            
+            // For Y position, use a small random offset for nodes of the same type
+            // to prevent perfect overlap
+            const nodeTypeNodes = graphData.nodes.filter(n => n.type === node.type);
+            const indexInType = nodeTypeNodes.indexOf(node);
+            const totalOfType = nodeTypeNodes.length;
+            
+            if (totalOfType > 1) {
+              // Create a vertical distribution for nodes of the same type
+              const yRange = 150; // Maximum vertical range for nodes of the same type
+              const yStep = yRange / (totalOfType - 1 || 1);
+              const yCenter = 0; // Center Y position
+              
+              // Position nodes vertically, centered around yCenter
+              const yPos = yCenter - (yRange / 2) + (indexInType * yStep);
+              node.fy = yPos;
+            } else {
+              // If only one node of this type, put it in the center
+              node.fy = 0;
+            }
+          }
         }
-        
-        // Position different node types along the x-axis
-        switch(node.type) {
-          case 'Farmer': 
-            return -dimensions.width * 0.35; // Far left
-          case 'Farmer_Group': 
-            return -dimensions.width * 0.25; // Left
-          case 'Local_Buying_Agent': 
-            return -dimensions.width * 0.15; // Left-center
-          case 'Lot': 
-            return -dimensions.width * 0.05; // Center-left
-          case 'Purchase_Order': 
-            return dimensions.width * 0.05; // Center-right
-          case 'PMB': 
-            return dimensions.width * 0.15; // Right-center
-          case 'Process_Order': 
-            return dimensions.width * 0.25; // Right
-          case 'Transfer_Order': 
-            return dimensions.width * 0.35; // Far right
-          default: 
-            return 0; // Center
-        }
-      }).strength(node => {
-        // Use zero strength for fixed nodes, normal strength for others
-        return (node.fx !== undefined) ? 0 : 0.3;
-      }));
+      });
       
-      // Add Y positioning with jitter, respecting fixed nodes
-      fgRef.current.d3Force('y', d3.forceY(node => {
-        // If node has been dragged and fixed, don't apply force
-        if (node.fx !== undefined && node.fy !== undefined) {
-          return node.fy; // Return the fixed position
-        }
-        
-        // Add some vertical variation based on node ID to avoid straight lines
-        const idHash = node.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        return (idHash % 200) - 100; // Range from -100 to 100
-      }).strength(node => {
-        // Use zero strength for fixed nodes, normal strength for others
-        return (node.fy !== undefined) ? 0 : 0.05;
-      }));
+      // Set much stronger positioning forces to maintain the line
+      fgRef.current.d3Force('x', d3.forceX(node => node.fx || 0).strength(0.8));
+      fgRef.current.d3Force('y', d3.forceY(node => node.fy || 0).strength(0.8));
 
-      // Auto-fit the graph to available space with more margin for horizontal layout
+      // For straight line layout, set zoom directly instead of auto-fitting
       setTimeout(() => {
-        // First fit the graph
-        fgRef.current.zoomToFit(400, 200); // More horizontal padding
+        // Calculate zoom level based on window width to ensure the entire line is visible
+        // Use the same totalWidth that was calculated above
+        const idealZoom = (dimensions.width / (totalWidth + 200)) * 0.85;
         
-        // Then zoom out further to ensure entire horizontal layout is visible with larger nodes
-        setTimeout(() => {
-          const currentZoom = fgRef.current.zoom();
-          fgRef.current.zoom(currentZoom * 0.55, 1000); // Zoom out more for larger nodes
-        }, 500);
-      }, 1000); // Wait longer for horizontal layout to stabilize
+        // Center the view at 0,0
+        fgRef.current.centerAt(0, 0, 800);
+        
+        // Apply custom zoom level
+        fgRef.current.zoom(idealZoom, 800);
+      }, 500);
     }
   }, [graphData]);
 
@@ -375,7 +370,9 @@ const GraphVisualization = ({ data }) => {
       <div className="legend">
         <div className="legend-section" style={{marginBottom: '10px'}}>
           <div style={{fontSize: '12px', marginBottom: '5px', fontStyle: 'italic', color: '#666'}}>
-            Drag nodes to position them. Right-click to reset position.
+            Nodes are in columns by type, from left to right.
+            <br />
+            You can drag nodes to adjust position. Right-click to reset.
           </div>
         </div>
         <div className="legend-section">
@@ -421,10 +418,17 @@ const GraphVisualization = ({ data }) => {
         linkDirectionalArrowLength={8} // Larger arrow to match node size
         linkDirectionalArrowRelPos={1} // At the end of the link
         linkDirectionalArrowColor={(link) => link.color || '#555'} // Match link color
-        linkColor={(link) => link.color || '#555'}
-        linkWidth={3} // Thicker lines to match larger nodes
+        linkWidth={2} // Slightly thinner for cleaner look in straight layout
         linkLineDash={[]} // No dash pattern
         linkDirectionalParticles={0} // No particles
+        linkColor={(link) => {
+          // Use lighter link colors for better visibility against the structured layout
+          const baseColor = link.color || '#555';
+          // Convert hex to rgba with some transparency
+          return baseColor.startsWith('#') 
+            ? `${baseColor}CC` // Add 80% opacity if it's a hex color
+            : baseColor;
+        }}
         cooldownTicks={200}
         cooldownTime={10000}
         d3AlphaDecay={0.01} // Slower decay for more gradual settling
